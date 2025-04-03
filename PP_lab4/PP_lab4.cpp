@@ -1,46 +1,18 @@
-﻿// PP_lab4.cpp : Этот файл содержит функцию "main". Здесь начинается и заканчивается выполнение программы.
-//
-
-#include <iostream>
-#include <fstream>
-#include <math.h>
-#include <omp.h>
-#include <cstdlib> 
+﻿#include <mpi.h>
+#include <cstdlib>
+#include <stdio.h>
 using namespace std;
 
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
 
-double psi_func(double x, double y, double z) {
-    return x*x + y*y + z*z;
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    printf("Hello, I am rank %d from %d!\n", rank, size);
+
+    MPI_Finalize();
+
+    return 0;
 }
-double p_func(double a, double x, double y, double z) {
-    return 6 - a * psi_func(x, y, z);
-}
-
-int main()
-{
-    // начальные координаты области
-    double x0 = -1, y0 = -1, z0 = -1;
-    // ограничения параллелепипеда области
-    double Dx = 2, Dy = 2, Dz = 2;
-    // Количество узлов в сетке по каждой из осей
-    double Nx = 15, Ny = 15, Nz = 15;
-    // параметр
-    double a = 10e+5;
-    // порог сходимости
-    double eps = 10e-8;
-
-    double hx = Dx / (Nx - 1), hy = Dy / (Ny - 1), hz = Dz / (Nz - 1);
-
-    std::cout << "Hello World!\n";
-}
-
-// Запуск программы: CTRL+F5 или меню "Отладка" > "Запуск без отладки"
-// Отладка программы: F5 или меню "Отладка" > "Запустить отладку"
-
-// Советы по началу работы 
-//   1. В окне обозревателя решений можно добавлять файлы и управлять ими.
-//   2. В окне Team Explorer можно подключиться к системе управления версиями.
-//   3. В окне "Выходные данные" можно просматривать выходные данные сборки и другие сообщения.
-//   4. В окне "Список ошибок" можно просматривать ошибки.
-//   5. Последовательно выберите пункты меню "Проект" > "Добавить новый элемент", чтобы создать файлы кода, или "Проект" > "Добавить существующий элемент", чтобы добавить в проект существующие файлы кода.
-//   6. Чтобы снова открыть этот проект позже, выберите пункты меню "Файл" > "Открыть" > "Проект" и выберите SLN-файл.
