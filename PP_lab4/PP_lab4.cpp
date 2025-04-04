@@ -140,6 +140,7 @@ int main()
         }
 
         printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
+        printf(" F[10][10][10] = %f\n", F[10][10][10]);
     }
     return(0);
 
