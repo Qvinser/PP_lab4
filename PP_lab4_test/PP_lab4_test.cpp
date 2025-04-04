@@ -120,20 +120,30 @@ int main(int argc, char** argv)
     int root = 0;
     int plane_size = (jn + 1) * (kn + 1);
 
-    const int send_rank = (rank + 1) % size;
-    const int recv_rank = (rank - 1 + size) % size;
-    MPI_Status status;
+    int send_rank;
+    int recv_rank;
 
     int start_layer = int(double(rank) / size * in);
     int end_layer = int(double(rank+1) / size * in);
+    // направление "волны" передачи
+    bool send_top = rank < size;
+    bool is_initialized = rank == root;
 
     /* Основной итерационный цикл */
     do
     {
+        send_rank = send_top ? rank + 1 : rank - 1;
+        recv_rank = !send_top ? rank + 1 : rank - 1;
         f = 1;
-        if ((f == 1) || (rank != root))
-            MPI_Recv(&(F[start_layer][0][0]), plane_size, MPI_DOUBLE,
-                recv_rank,1, MPI_COMM_WORLD, &status);
+
+        MPI_Request send_req, recv_req;
+        if (MPI_Irecv(&(F[start_layer][0][0]), plane_size, MPI_DOUBLE,
+            recv_rank, 1, MPI_COMM_WORLD, &recv_req) == MPI_SUCCESS) {
+            MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+            is_initialized = true;
+        }
+        if (!is_initialized) continue;
+
         for (i = 1; i < in; i++)
             for (j = 1; j < jn; j++)
             {
@@ -148,6 +158,28 @@ int main(int argc, char** argv)
                         f = 0;
                 }
             }
+        // Нижний слой
+        if (rank == root) {
+            MPI_Isend(&(F[end_layer][0][0]), plane_size, MPI_DOUBLE,
+                send_rank, 1, MPI_COMM_WORLD, &send_req);
+        }
+        // Верхний слой
+        else if (rank == size-1) {
+            MPI_Isend(&(F[start_layer][0][0]), plane_size, MPI_DOUBLE,
+                send_rank, 1, MPI_COMM_WORLD, &send_req);
+        }
+        // Промежуточный слой
+        else {
+            if (send_top) {
+                MPI_Isend(&(F[end_layer][0][0]), plane_size, MPI_DOUBLE,
+                    send_rank, 1, MPI_COMM_WORLD, &send_req);
+            }
+            else {
+                MPI_Isend(&(F[start_layer][0][0]), plane_size, MPI_DOUBLE,
+                    send_rank, 1, MPI_COMM_WORLD, &send_req);
+            }
+            send_top = !send_top;
+        }
         it++;
     } while (f == 0);
 
