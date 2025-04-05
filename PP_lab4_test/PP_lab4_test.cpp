@@ -23,6 +23,7 @@ void Inic();
 
 /* Выделение памяти для 3D пространства */
 double F[in + 1][jn + 1][kn + 1];
+int rank, size;
 
 double hx, hy, hz;
 int i, j, k, mi, mj, mk;
@@ -76,6 +77,7 @@ void Inic()
 }
 
 void f_count_FOblast() {
+    //if (i <= 1 && rank==0) printf("\n%d", i);
     for (j = 1; j < jn; j++)
     {
         for (k = 1; k < kn; k++)
@@ -97,7 +99,6 @@ void f_count_FOblast() {
 int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
-    int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
@@ -106,7 +107,7 @@ int main(int argc, char** argv)
     X = 2.0;
     Y = 2.0;
     Z = 2.0;
-    e = 10e-5;
+    e = 1e-3;
 
     /* Размеры шагов */
     hx = X / in;
@@ -128,11 +129,13 @@ int main(int argc, char** argv)
     int send_rank, recv_rank;
     int send_tag, recv_tag;
     MPI_Request send_req, recv_req;
+    int recv_code, send_code;
+    int recv_layer, send_layer;
     // MPI_Status status;
 
-    int start_layer = int(double(rank) / size * (in+1));
+    int start_layer = int(double(rank) * (in+1) / size);
     // Последний слой (end_layer) не принадлежит подобласти конкретного процесса
-    int end_layer = int(double(rank+1) / size * (in+1));
+    int end_layer = int(double(rank+1) * (in+1) / size);
     // направление "волны" передачи; size-1 - ранк самого верхнего слоя
     bool send_top = rank < head;
     bool first_run = true;
@@ -140,37 +143,39 @@ int main(int argc, char** argv)
     /* Основной итерационный цикл */
     do
     {
-        //printf("address diff = %d\n", int(&F[0][10][0] - &F[0][9][20]));
-        send_rank = send_top ? rank + 1 : rank - 1;
-        recv_rank = !send_top ? rank + 1 : rank - 1;
-        if (rank == root) recv_rank = rank + 1;
-        if (rank == head) recv_rank = rank - 1;
         f = 1;
-
         send_tag = send_top ? TAG_UP : TAG_DOWN;
         recv_tag = send_tag;
         if (rank == root) recv_tag = TAG_DOWN;
         if (rank == head) recv_tag = TAG_UP;
+        recv_rank = recv_tag == TAG_UP ? rank - 1 : rank + 1;
+        send_rank = send_tag == TAG_UP ? rank + 1 : rank - 1;
 
-        if (rank==0)printf("\n%f", F[2][5][5]);
-        int recv_layer = recv_rank < rank ? start_layer-1 : end_layer;
-        int recv_code = MPI_Irecv(&(F[recv_layer][0][0]), plane_size, MPI_DOUBLE,
-            recv_rank, recv_tag, MPI_COMM_WORLD, &recv_req);
-        int send_layer = send_top ? end_layer : start_layer;
-        int send_code = MPI_Isend(&(F[send_layer][0][0]), plane_size, MPI_DOUBLE,
-            send_rank, send_tag, MPI_COMM_WORLD, &send_req);
+        recv_layer = recv_tag == TAG_UP ? start_layer-1 : end_layer;
+        send_layer = send_top ? end_layer-1 : start_layer;
 
-        if (recv_tag == TAG_UP) { 
+        //if (rank==0)printf("\n%f", F[0][1][1]);
+        //if (rank == 0)printf("\n%d %d", start_layer, recv_rank);
+        //if (rank == 0)printf("\n%d", &(F[12][0][0])- &(F[11][0][0]));
+
+        if(!(rank==root && first_run))
+            recv_code = MPI_Irecv(&(F[recv_layer][0][0]), plane_size, MPI_DOUBLE,
+                recv_rank, recv_tag, MPI_COMM_WORLD, &recv_req);
+
+        if (send_top) {
             for (i = start_layer+1; i <= end_layer-1; i++) f_count_FOblast();
         }
-        else if (recv_tag == TAG_DOWN) {
+        else {
             for (i = end_layer-2; i >= start_layer; i--) f_count_FOblast();
         }
 
-        if (!first_run || rank>root) {
-            //if(recv_code == MPI_SUCCESS)MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+        send_code = MPI_Isend(&(F[send_layer][0][0]), plane_size, MPI_DOUBLE,
+            send_rank, send_tag, MPI_COMM_WORLD, &send_req);
+
+        if (!(rank == root && first_run)) {
+          //if (recv_code == MPI_SUCCESS)MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+          //if (send_code == MPI_SUCCESS)MPI_Wait(&send_req, MPI_STATUS_IGNORE);
         }
-        MPI_Wait(&send_req, MPI_STATUS_IGNORE);
 
         if ((rank > root) && (rank < head)) send_top = !send_top;
         it++;
@@ -200,8 +205,8 @@ int main(int argc, char** argv)
             }
         }
 
-        //printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
-        printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
+        printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
+        printf(" F[%d][10][10] = %f\n", start_layer+1, F[start_layer+1][10][10]);
     }
     MPI_Finalize();
     return(0);
