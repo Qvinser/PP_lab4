@@ -10,6 +10,7 @@
 #define in 20    
 #define jn 20
 #define kn 20
+#define plane_size 441
 
 #define TAG_UP 1
 #define TAG_DOWN 2
@@ -24,6 +25,15 @@ void Inic();
 double F[in + 1][jn + 1][kn + 1];
 
 double hx, hy, hz;
+int i, j, k, mi, mj, mk;
+double X, Y, Z;
+double max, N, t1, t2;
+double owx, owy, owz, c, e;
+double Fi, Fj, Fk, F1;
+
+int R, fl, fl1, fl2;
+int it, f;
+long int osdt;
 
 
 /* Функция определения точного решения */
@@ -65,6 +75,24 @@ void Inic()
     }
 }
 
+void f_count_FOblast() {
+    for (j = 1; j < jn; j++)
+    {
+        for (k = 1; k < kn; k++)
+        {
+            F1 = F[i][j][k];
+            Fi = (F[i + 1][j][k] + F[i - 1][j][k]) / owx;
+            Fj = (F[i][j + 1][k] + F[i][j - 1][k]) / owy;
+            Fk = (F[i][j][k + 1] + F[i][j][k - 1]) / owz;
+            F[i][j][k] = (Fi + Fj + Fk - Ro(i * hx, j * hy, k * hz)) / c;
+            if (fabs(F[i][j][k] - F1) > e) {
+                //printf("\n F[%d][%d][%d]-%f=%f", i, j, k, F1, fabs(F[i][j][k] - F1));
+                f = 0;
+            }
+        }
+    }
+}
+
 
 int main(int argc, char** argv)
 {
@@ -72,16 +100,6 @@ int main(int argc, char** argv)
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-    double X, Y, Z;
-    double max, N, t1, t2;
-    double owx, owy, owz, c, e;
-    double Fi, Fj, Fk, F1;
-
-    int i, j, k, mi, mj, mk;
-    int R, fl, fl1, fl2;
-    int it, f;
-    long int osdt;
 
 
     it = 0;
@@ -105,62 +123,58 @@ int main(int argc, char** argv)
     /* Инициализация границ пространства */
     Inic();
     int root = 0;
-    int plane_size = (jn + 1) * (kn + 1);
+    int head = size - 1;
 
-    int send_rank;
-    int recv_rank;
+    int send_rank, recv_rank;
+    int send_tag, recv_tag;
+    MPI_Request send_req, recv_req;
     // MPI_Status status;
 
-    int start_layer = int(double(rank) / size * in);
-    int end_layer = int(double(rank+1) / size * in);
+    int start_layer = int(double(rank) / size * (in+1));
+    // Последний слой (end_layer) не принадлежит подобласти конкретного процесса
+    int end_layer = int(double(rank+1) / size * (in+1));
     // направление "волны" передачи; size-1 - ранк самого верхнего слоя
-    bool send_top = rank < size-1;
+    bool send_top = rank < head;
+    bool first_run = true;
 
     /* Основной итерационный цикл */
     do
     {
+        //printf("address diff = %d\n", int(&F[0][10][0] - &F[0][9][20]));
         send_rank = send_top ? rank + 1 : rank - 1;
         recv_rank = !send_top ? rank + 1 : rank - 1;
         if (rank == root) recv_rank = rank + 1;
-        if (rank == size-1) recv_rank = rank - 1;
+        if (rank == head) recv_rank = rank - 1;
         f = 1;
-        MPI_Request send_req, recv_req;
 
-        int send_tag = send_top ? TAG_UP : TAG_DOWN;
-        int recv_tag = send_tag;
+        send_tag = send_top ? TAG_UP : TAG_DOWN;
+        recv_tag = send_tag;
         if (rank == root) recv_tag = TAG_DOWN;
-        if (rank == size-1) recv_tag = TAG_UP;
+        if (rank == head) recv_tag = TAG_UP;
 
-        int* recv_layer = recv_rank < rank ? &start_layer : &end_layer;
-        int recv_code = MPI_Irecv(&(F[*recv_layer][0][0]), plane_size, MPI_DOUBLE,
-            recv_rank, 1, MPI_COMM_WORLD, &recv_req);
+        if (rank==0)printf("\n%f", F[2][5][5]);
+        int recv_layer = recv_rank < rank ? start_layer-1 : end_layer;
+        int recv_code = MPI_Irecv(&(F[recv_layer][0][0]), plane_size, MPI_DOUBLE,
+            recv_rank, recv_tag, MPI_COMM_WORLD, &recv_req);
+        int send_layer = send_top ? end_layer : start_layer;
+        int send_code = MPI_Isend(&(F[send_layer][0][0]), plane_size, MPI_DOUBLE,
+            send_rank, send_tag, MPI_COMM_WORLD, &send_req);
 
-        int* send_layer = send_top ? &end_layer : &start_layer;
-        MPI_Isend(&(F[*send_layer][0][0]), plane_size, MPI_DOUBLE,
-            send_rank, 1, MPI_COMM_WORLD, &send_req);
+        if (recv_tag == TAG_UP) { 
+            for (i = start_layer+1; i <= end_layer-1; i++) f_count_FOblast();
+        }
+        else if (recv_tag == TAG_DOWN) {
+            for (i = end_layer-2; i >= start_layer; i--) f_count_FOblast();
+        }
 
-        // Границы, в которых вычисляем значения функции в зависимости от положения
-        // в системе декартовых координат
-        int i_start = send_top ? start_layer + 1 : start_layer;
-        int i_end = send_top ? end_layer : end_layer - 1;
-        for (i = i_start; i <= i_end; i++)
-            for (j = 1; j < jn; j++)
-            {
-                for (k = 1; k < kn; k++)
-                {
-                    F1 = F[i][j][k];
-                    Fi = (F[i + 1][j][k] + F[i - 1][j][k]) / owx;
-                    Fj = (F[i][j + 1][k] + F[i][j - 1][k]) / owy;
-                    Fk = (F[i][j][k + 1] + F[i][j][k - 1]) / owz;
-                    F[i][j][k] = (Fi + Fj + Fk - Ro(i * hx, j * hy, k * hz)) / c;
-                    if (fabs(F[i][j][k] - F1) > e)
-                        f = 0;
-                }
-            }
-        if ((rank != root) && (rank < size-1)) send_top = !send_top;
-        it++;
+        if (!first_run || rank>root) {
+            //if(recv_code == MPI_SUCCESS)MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+        }
         MPI_Wait(&send_req, MPI_STATUS_IGNORE);
-        MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+
+        if ((rank > root) && (rank < head)) send_top = !send_top;
+        it++;
+        first_run = false;
     } while (f == 0);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
@@ -186,7 +200,7 @@ int main(int argc, char** argv)
             }
         }
 
-        printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
+        //printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
         printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
     }
     MPI_Finalize();
