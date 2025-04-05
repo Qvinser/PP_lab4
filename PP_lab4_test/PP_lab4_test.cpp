@@ -19,6 +19,7 @@ void Inic();
 
 /* Выделение памяти для 3D пространства */
 double F[in + 1][jn + 1][kn + 1];
+double test_arr[jn + 1][kn + 1];
 
 double hx, hy, hz;
 
@@ -60,22 +61,19 @@ void Inic()
             }
         }
     }
+    for (j = 0; j <= jn; j++)
+    {
+        for (k = 0; k <= kn; k++)
+        {
+            test_arr[j][k] = 0;
+        }
+    }
 }
 
-
-std::vector<double> recv_plane() {
-    // Probe recv from any rank to get recv parameters.
-    MPI_Status status;
-    MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-    int src_rank = status.MPI_SOURCE;
-    int tag = status.MPI_TAG;
-    int col_size;
-    MPI_Get_count(&status, MPI_DOUBLE, &col_size);
-
-    // Recv and print column.
-    std::vector<double> column(col_size);
-    MPI_Recv(&column[0], col_size, MPI_DOUBLE, src_rank, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    return column;
+// теги - восходящая волна и нисходящая
+int bool_to_tag(bool b) {
+    return b ? 1 : 2;
+    //return 1;
 }
 
 
@@ -101,7 +99,7 @@ int main(int argc, char** argv)
     X = 2.0;
     Y = 2.0;
     Z = 2.0;
-    e = 0.00001;
+    e = 10e-5;
 
     /* Размеры шагов */
     hx = X / in;
@@ -122,11 +120,12 @@ int main(int argc, char** argv)
 
     int send_rank;
     int recv_rank;
+    // MPI_Status status;
 
     int start_layer = int(double(rank) / size * in);
     int end_layer = int(double(rank+1) / size * in);
-    // направление "волны" передачи
-    bool send_top = rank < size;
+    // направление "волны" передачи; size-1 - ранк самого верхнего слоя
+    bool send_top = rank < size-1;
     bool is_initialized = rank == root;
 
     /* Основной итерационный цикл */
@@ -134,17 +133,30 @@ int main(int argc, char** argv)
     {
         send_rank = send_top ? rank + 1 : rank - 1;
         recv_rank = !send_top ? rank + 1 : rank - 1;
+        if (rank == root) recv_rank = rank + 1;
+        if (rank == size-1) recv_rank = rank - 1;
         f = 1;
-
         MPI_Request send_req, recv_req;
-        if (MPI_Irecv(&(F[start_layer][0][0]), plane_size, MPI_DOUBLE,
-            recv_rank, 1, MPI_COMM_WORLD, &recv_req) == MPI_SUCCESS) {
-            MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
-            is_initialized = true;
+        int* recv_layer = recv_rank < rank ? &start_layer : &end_layer;
+        int recv_code = MPI_Irecv(&(test_arr[0][0]), plane_size, MPI_DOUBLE,
+            recv_rank, bool_to_tag(send_top), MPI_COMM_WORLD, &recv_req);
+        if (recv_code == MPI_SUCCESS) {
+            if (!is_initialized) {
+                MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+                is_initialized = true;
+            }
+            //printf("\nreceived F[%d][10][10] = %f", *recv_layer, test_arr[10][10]);
         }
+        else { printf("\nRecv failed. Code: %d", recv_code ); }
         if (!is_initialized) continue;
 
-        for (i = 1; i < in; i++)
+        // Границы, в которых вычисляем значения функции в зависимости от положения
+        // в системе декартовых координат
+        int i_start = send_top ? start_layer + 1 : start_layer;
+        int i_end = send_top ? end_layer : end_layer - 1;
+        //if (rank == root) i_end = end_layer - 1;
+        //if (rank == size - 1) i_end = end_layer;
+        for (i = i_start; i <= i_end; i++)
             for (j = 1; j < jn; j++)
             {
                 for (k = 1; k < kn; k++)
@@ -158,40 +170,31 @@ int main(int argc, char** argv)
                         f = 0;
                 }
             }
-        // Нижний слой
-        if (rank == root) {
+        if (send_top) {
             MPI_Isend(&(F[end_layer][0][0]), plane_size, MPI_DOUBLE,
-                send_rank, 1, MPI_COMM_WORLD, &send_req);
+                send_rank, bool_to_tag(send_top), MPI_COMM_WORLD, &send_req);
+            //printf("\nsent F[%d][10][10] = %f", end_layer, F[end_layer][10][10]);
         }
-        // Верхний слой
-        else if (rank == size-1) {
-            MPI_Isend(&(F[start_layer][0][0]), plane_size, MPI_DOUBLE,
-                send_rank, 1, MPI_COMM_WORLD, &send_req);
-        }
-        // Промежуточный слой
         else {
-            if (send_top) {
-                MPI_Isend(&(F[end_layer][0][0]), plane_size, MPI_DOUBLE,
-                    send_rank, 1, MPI_COMM_WORLD, &send_req);
-            }
-            else {
-                MPI_Isend(&(F[start_layer][0][0]), plane_size, MPI_DOUBLE,
-                    send_rank, 1, MPI_COMM_WORLD, &send_req);
-            }
-            send_top = !send_top;
+            MPI_Isend(&(F[start_layer][0][0]), plane_size, MPI_DOUBLE,
+                send_rank, bool_to_tag(send_top), MPI_COMM_WORLD, &send_req);
+            //printf("\nsent F[%d][10][10] = %f", start_layer, F[start_layer][10][10]);
         }
+        if ((rank != root) && (rank < size-1)) send_top = !send_top;
         it++;
+        MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+        MPI_Wait(&send_req, MPI_STATUS_IGNORE);
     } while (f == 0);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
-    printf("\n in = %d  iter = %d E = %f  T = %f seconds\n", in, it, e, elapsed.count());
+    printf("\n rank = %d  iter = %d E = %f  T = %f seconds\n", rank, it, e, elapsed.count());
 
     /* Нахождение максимального расхождения полученного приближенного решения
      * и точного решения */
     max = 0.0;
     {
-        for (i = 1; i <= in; i++)
+        for (i = start_layer; i < end_layer; i++)
         {
             for (j = 1; j < jn; j++)
             {
@@ -207,8 +210,9 @@ int main(int argc, char** argv)
         }
 
         printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
-        printf(" F[10][10][10] = %f\n", F[10][10][10]);
+        printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
     }
+    MPI_Finalize();
     return(0);
 
 }
