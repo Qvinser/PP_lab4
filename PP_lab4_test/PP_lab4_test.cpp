@@ -77,7 +77,6 @@ void Inic()
 }
 
 void f_count_FOblast() {
-    //if (i <= 1 && rank==0) printf("\n%d", i);
     for (j = 1; j < jn; j++)
     {
         for (k = 1; k < kn; k++)
@@ -88,7 +87,6 @@ void f_count_FOblast() {
             Fk = (F[i][j][k + 1] + F[i][j][k - 1]) / owz;
             F[i][j][k] = (Fi + Fj + Fk - Ro(i * hx, j * hy, k * hz)) / c;
             if (fabs(F[i][j][k] - F1) > e) {
-                //printf("\n F[%d][%d][%d]-%f=%f", i, j, k, F1, fabs(F[i][j][k] - F1));
                 f = 0;
             }
         }
@@ -107,7 +105,7 @@ int main(int argc, char** argv)
     X = 2.0;
     Y = 2.0;
     Z = 2.0;
-    e = 1e-3;
+    e = 1e-8;
 
     /* Размеры шагов */
     hx = X / in;
@@ -129,9 +127,8 @@ int main(int argc, char** argv)
     int send_rank, recv_rank;
     int send_tag, recv_tag;
     MPI_Request send_req, recv_req;
-    int recv_code, send_code;
+    int recv_code = 100, send_code = 100;
     int recv_layer, send_layer;
-    // MPI_Status status;
 
     int start_layer = int(double(rank) * (in+1) / size);
     // Последний слой (end_layer) не принадлежит подобласти конкретного процесса
@@ -140,6 +137,7 @@ int main(int argc, char** argv)
     bool send_top = rank < head;
     bool first_run = true;
 
+    int message_found;
     /* Основной итерационный цикл */
     do
     {
@@ -156,9 +154,9 @@ int main(int argc, char** argv)
 
         //if (rank==0)printf("\n%f", F[0][1][1]);
         //if (rank == 0)printf("\n%d %d", start_layer, recv_rank);
-        //if (rank == 0)printf("\n%d", &(F[12][0][0])- &(F[11][0][0]));
-
-        if(!(rank==root && first_run))
+        MPI_Iprobe(recv_rank, recv_tag, MPI_COMM_WORLD, &message_found, MPI_STATUS_IGNORE);
+        // 0 - иначе
+        if (message_found == 1)
             recv_code = MPI_Irecv(&(F[recv_layer][0][0]), plane_size, MPI_DOUBLE,
                 recv_rank, recv_tag, MPI_COMM_WORLD, &recv_req);
 
@@ -172,15 +170,17 @@ int main(int argc, char** argv)
         send_code = MPI_Isend(&(F[send_layer][0][0]), plane_size, MPI_DOUBLE,
             send_rank, send_tag, MPI_COMM_WORLD, &send_req);
 
-        if (!(rank == root && first_run)) {
-          //if (recv_code == MPI_SUCCESS)MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
-          //if (send_code == MPI_SUCCESS)MPI_Wait(&send_req, MPI_STATUS_IGNORE);
+        if (true) {
+            if (recv_code == MPI_SUCCESS)
+                MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+            if (message_found == 1 && send_code == MPI_SUCCESS)
+                MPI_Wait(&send_req, MPI_STATUS_IGNORE);
         }
 
         if ((rank > root) && (rank < head)) send_top = !send_top;
         it++;
         first_run = false;
-    } while (f == 0);
+    } while (f == 0 || it<5000);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
@@ -206,7 +206,7 @@ int main(int argc, char** argv)
         }
 
         printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
-        printf(" F[%d][10][10] = %f\n", start_layer+1, F[start_layer+1][10][10]);
+        printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
     }
     MPI_Finalize();
     return(0);
