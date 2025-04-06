@@ -7,7 +7,7 @@
 #include "mpi.h"
 
 // Флаги о завершении работы
-int local_finish = 1;
+int local_finish = 0;
 int global_finish = 0;
 bool finish_flag = false;
 MPI_Request finish_request;
@@ -129,6 +129,7 @@ int main(int argc, char** argv)
     Inic();
     int root = 0;
     int head = size - 1;
+    int test_flag = 0;
 
     MPI_Request send_req, recv_req, send_back_req;
     int recv_code = 100, send_code = 100, send_back_code = 100, reduce_code = 100;
@@ -142,12 +143,10 @@ int main(int argc, char** argv)
     /* Основной итерационный цикл */
     do
     {
+        if (f == 1 && local_finish==0) local_finish = 1;
+        MPI_Iallreduce(&local_finish, &global_finish,
+            1, MPI_INT, MPI_LAND, MPI_COMM_WORLD, &finish_request);
 
-        if (f == 1 && !finish_flag) {
-            reduce_code = MPI_Iallreduce(&local_finish, &global_finish,
-                1, MPI_INT, MPI_LAND, MPI_COMM_WORLD, &finish_request);
-            finish_flag = true;
-        }
         f = 1;
         // Обратное распространение
         if (rank < head) {
@@ -193,13 +192,10 @@ int main(int argc, char** argv)
         it++;
         //printf("\n %d", it);
 
-        if (finish_flag) {
-            // Проверяем, завершилась ли операция
-            if (global_finish) {
-                break;
-            }
-        }
-    } while (true);
+        int complete_flag = 0;
+        //MPI_Test(&finish_request, &complete_flag, MPI_STATUS_IGNORE);
+        MPI_Wait(&finish_request, MPI_STATUS_IGNORE);
+    } while (!global_finish);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
@@ -227,8 +223,6 @@ int main(int argc, char** argv)
         printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
         printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
     }
-    int flag;
-    MPI_Test(&finish_request, &flag, MPI_STATUS_IGNORE);
     MPI_Finalize();
     return(0);
 
