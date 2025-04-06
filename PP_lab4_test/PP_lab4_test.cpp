@@ -12,8 +12,8 @@
 #define kn 20
 #define plane_size 441
 
-#define TAG_UP 1
-#define TAG_DOWN 2
+#define TAG_DIRECT 1
+#define TAG_BACK 2
 
 #define a 1
 
@@ -33,7 +33,7 @@ double owx, owy, owz, c, e;
 double Fi, Fj, Fk, F1;
 
 int R, fl, fl1, fl2;
-int it, f;
+int it = 0, f;
 long int osdt;
 
 
@@ -124,63 +124,62 @@ int main(int argc, char** argv)
     int root = 0;
     int head = size - 1;
 
-    int send_rank, recv_rank;
-    int send_tag, recv_tag;
-    MPI_Request send_req, recv_req;
-    int recv_code = 100, send_code = 100;
-    int recv_layer, send_layer;
+    MPI_Request send_req, recv_req, send_back_req;
+    int recv_code = 100, send_code = 100, send_back_code = 100;
 
     int start_layer = int(double(rank) * (in+1) / size);
     // Последний слой (end_layer) не принадлежит подобласти конкретного процесса
     int end_layer = int(double(rank+1) * (in+1) / size);
     // направление "волны" передачи; size-1 - ранк самого верхнего слоя
-    bool send_top = rank < head;
-    bool first_run = true;
 
-    int message_found;
+    int message_back_found = 0, last_message_it = it;
     /* Основной итерационный цикл */
     do
     {
         f = 1;
-        send_tag = send_top ? TAG_UP : TAG_DOWN;
-        recv_tag = send_tag;
-        if (rank == root) recv_tag = TAG_DOWN;
-        if (rank == head) recv_tag = TAG_UP;
-        recv_rank = recv_tag == TAG_UP ? rank - 1 : rank + 1;
-        send_rank = send_tag == TAG_UP ? rank + 1 : rank - 1;
 
-        recv_layer = recv_tag == TAG_UP ? start_layer-1 : end_layer;
-        send_layer = send_top ? end_layer-1 : start_layer;
-
-        //if (rank==0)printf("\n%f", F[0][1][1]);
-        //if (rank == 0)printf("\n%d %d", start_layer, recv_rank);
-        MPI_Iprobe(recv_rank, recv_tag, MPI_COMM_WORLD, &message_found, MPI_STATUS_IGNORE);
-        // 0 - иначе
-        if (message_found == 1)
-            recv_code = MPI_Irecv(&(F[recv_layer][0][0]), plane_size, MPI_DOUBLE,
-                recv_rank, recv_tag, MPI_COMM_WORLD, &recv_req);
-
-        if (send_top) {
-            for (i = start_layer+1; i <= end_layer-1; i++) f_count_FOblast();
+        // Обратное распространение
+        if (rank < head) {
+            MPI_Iprobe(rank+1, TAG_BACK, MPI_COMM_WORLD, &message_back_found, MPI_STATUS_IGNORE);
+            if (message_back_found == 1) {
+                recv_code = MPI_Irecv(&(F[end_layer][0][0]), plane_size, MPI_DOUBLE,
+                    rank+1, TAG_BACK, MPI_COMM_WORLD, &recv_req);
+                last_message_it = it;
+            }
         }
-        else {
-            for (i = end_layer-2; i >= start_layer; i--) f_count_FOblast();
+        // Прямое распространение
+        if (rank != root) {
+            MPI_Recv(&(F[start_layer-1][0][0]), plane_size, MPI_DOUBLE,
+                rank-1, TAG_DIRECT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
-
-        send_code = MPI_Isend(&(F[send_layer][0][0]), plane_size, MPI_DOUBLE,
-            send_rank, send_tag, MPI_COMM_WORLD, &send_req);
-
-        if (true) {
-            if (recv_code == MPI_SUCCESS)
-                MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
-            if (message_found == 1 && send_code == MPI_SUCCESS)
-                MPI_Wait(&send_req, MPI_STATUS_IGNORE);
+        // Вычисляем границу для обратного распространения
+        if (rank != root) {
+            i = start_layer;
+            f_count_FOblast();
+            send_back_code = MPI_Isend(&(F[start_layer][0][0]), plane_size, MPI_DOUBLE,
+                rank-1, TAG_BACK, MPI_COMM_WORLD, &send_back_req);
+        }
+        // Вычисляем остальное подпространство
+        //for (int times = 0; times < 5; times++)
+        for (i = start_layer+1; i < end_layer-1; i++) f_count_FOblast();
+        if (rank < head) {
+            i = end_layer - 1;
+            f_count_FOblast();
         }
 
-        if ((rank > root) && (rank < head)) send_top = !send_top;
+        // Прямое распространение
+        if (rank < head) send_code = MPI_Isend(&(F[end_layer - 1][0][0]), plane_size, MPI_DOUBLE,
+            rank+1, TAG_DIRECT, MPI_COMM_WORLD, &send_req);
+
+        if (message_back_found == 1 && recv_code == MPI_SUCCESS)
+            MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+        //if (send_code == MPI_SUCCESS)
+        //    MPI_Wait(&send_req, MPI_STATUS_IGNORE);
+        //if (send_back_code == MPI_SUCCESS)
+        //    MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
+
         it++;
-        first_run = false;
-    } while (f == 0 || it<5000);
+    } while (it < 100000);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
