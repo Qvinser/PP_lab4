@@ -189,9 +189,16 @@ int main(int argc, char** argv)
         if (send_back_code == MPI_SUCCESS)
             MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
 
-        if (global_finish == 1)break;
+        //if (global_finish == 1)break;
         it++;
-        printf("\n %d", it);
+        //printf("\n %d", it);
+
+        if (finish_flag) {
+            // Проверяем, завершилась ли операция
+            if (global_finish) {
+                break;
+            }
+        }
     } while (true);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
@@ -220,6 +227,8 @@ int main(int argc, char** argv)
         printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
         printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
     }
+    int flag;
+    MPI_Test(&finish_request, &flag, MPI_STATUS_IGNORE);
     MPI_Finalize();
     return(0);
 
