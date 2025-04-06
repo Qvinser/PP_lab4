@@ -6,6 +6,12 @@
 #include<vector>
 #include "mpi.h"
 
+// Флаги о завершении работы
+int local_finish = 1;
+int global_finish = 0;
+bool finish_flag = false;
+MPI_Request finish_request;
+
 /* Количество ячеек вдоль координат x, y, z */
 #define in 20    
 #define jn 20
@@ -33,7 +39,7 @@ double owx, owy, owz, c, e;
 double Fi, Fj, Fk, F1;
 
 int R, fl, fl1, fl2;
-int it = 0, f;
+int it = 0, f = 0;
 long int osdt;
 
 
@@ -99,7 +105,7 @@ int main(int argc, char** argv)
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
-
+    
 
     it = 0;
     X = 2.0;
@@ -125,7 +131,7 @@ int main(int argc, char** argv)
     int head = size - 1;
 
     MPI_Request send_req, recv_req, send_back_req;
-    int recv_code = 100, send_code = 100, send_back_code = 100;
+    int recv_code = 100, send_code = 100, send_back_code = 100, reduce_code = 100;
 
     int start_layer = int(double(rank) * (in+1) / size);
     // Последний слой (end_layer) не принадлежит подобласти конкретного процесса
@@ -136,8 +142,13 @@ int main(int argc, char** argv)
     /* Основной итерационный цикл */
     do
     {
-        f = 1;
 
+        if (f == 1 && !finish_flag) {
+            reduce_code = MPI_Iallreduce(&local_finish, &global_finish,
+                1, MPI_INT, MPI_LAND, MPI_COMM_WORLD, &finish_request);
+            finish_flag = true;
+        }
+        f = 1;
         // Обратное распространение
         if (rank < head) {
             MPI_Iprobe(rank+1, TAG_BACK, MPI_COMM_WORLD, &message_back_found, MPI_STATUS_IGNORE);
@@ -173,13 +184,15 @@ int main(int argc, char** argv)
 
         if (message_back_found == 1 && recv_code == MPI_SUCCESS)
             MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
-        //if (send_code == MPI_SUCCESS)
-        //    MPI_Wait(&send_req, MPI_STATUS_IGNORE);
-        //if (send_back_code == MPI_SUCCESS)
-        //    MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
+        if (send_code == MPI_SUCCESS)
+            MPI_Wait(&send_req, MPI_STATUS_IGNORE);
+        if (send_back_code == MPI_SUCCESS)
+            MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
 
+        if (global_finish == 1)break;
         it++;
-    } while (it < 100000);
+        printf("\n %d", it);
+    } while (true);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
