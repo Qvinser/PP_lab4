@@ -13,6 +13,10 @@ bool finish_flag = false;
 MPI_Request finish_request;
 
 /* Количество ячеек вдоль координат x, y, z */
+#define x0 -1
+#define y0 -1
+#define z0 -1
+
 #define in 20    
 #define jn 20
 #define kn 20
@@ -21,7 +25,7 @@ MPI_Request finish_request;
 #define TAG_DIRECT 1
 #define TAG_BACK 2
 
-#define a 1
+#define a 1e+5
 
 double Fresh(double, double, double);
 double Ro(double, double, double);
@@ -47,7 +51,7 @@ long int osdt;
 double Fresh(double x, double y, double z)
 {
     double res;
-    res = x + y + z;
+    res = (x * x + y * y + z * z);
     return res;
 }
 
@@ -55,7 +59,7 @@ double Fresh(double x, double y, double z)
 double Ro(double x, double y, double z)
 {
     double d;
-    d = -a * (x + y + z);
+    d = 6 - a * (x*x + y*y + z*z);
     return d;
 }
 
@@ -75,7 +79,7 @@ void Inic()
                 }
                 else
                 {
-                    F[i][j][k] = Fresh(i * hx, j * hy, k * hz);
+                    F[i][j][k] = Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz);
                 }
             }
         }
@@ -91,7 +95,7 @@ void f_count_FOblast() {
             Fi = (F[i + 1][j][k] + F[i - 1][j][k]) / owx;
             Fj = (F[i][j + 1][k] + F[i][j - 1][k]) / owy;
             Fk = (F[i][j][k + 1] + F[i][j][k - 1]) / owz;
-            F[i][j][k] = (Fi + Fj + Fk - Ro(i * hx, j * hy, k * hz)) / c;
+            F[i][j][k] = (Fi + Fj + Fk - Ro(x0 + i * hx, y0 + j * hy, z0 + k * hz)) / c;
             if (fabs(F[i][j][k] - F1) > e) {
                 f = 0;
             }
@@ -211,7 +215,7 @@ int main(int argc, char** argv)
             {
                 for (k = 1; k < kn; k++)
                 {
-                    if ((F1 = fabs(F[i][j][k] - Fresh(i * hx, j * hy, k * hz))) > max)
+                    if ((F1 = fabs(F[i][j][k] - Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz))) > max)
                     {
                         max = F1;
                         mi = i; mj = j; mk = k;
