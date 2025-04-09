@@ -255,7 +255,7 @@ int main(int argc, char** argv)
         }
 
         printf(" Max differ = %f\n in point(%d,%d,%d) = %f\n", max, mi, mj, mk, F2);
-        printf(" Range from %d to %d\n", start_layer, end_layer);
+        //printf(" Range from %d to %d\n", start_layer, end_layer);
         //printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
     }
     deallocate_3d_array(F, in + 1, jn + 1);
