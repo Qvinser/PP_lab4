@@ -8,8 +8,7 @@
 
 // Флаги о завершении работы
 int local_finish = 0;
-int global_finish = 0;
-bool finish_flag = false;
+int finalize_count = 0;
 MPI_Request finish_request;
 
 /* Количество ячеек вдоль координат x, y, z */
@@ -17,13 +16,14 @@ MPI_Request finish_request;
 #define y0 -1
 #define z0 -1
 
-#define in 100    
-#define jn 100
-#define kn 100
+#define in 2000
+#define jn 50
+#define kn 50
 #define plane_size ((jn+1)*(kn+1))
 
 #define TAG_DIRECT 1
 #define TAG_BACK 2
+#define TAG_FINALIZE 3
 
 #define a 1e+5
 
@@ -33,7 +33,6 @@ void Inic();
 
 /* Выделение памяти для 3D пространства */
 double*** F;
-double F_tmp[jn+1][kn+1];
 int rank, size;
 int start_layer, end_layer, layer_count;
 
@@ -171,13 +170,25 @@ int main(int argc, char** argv)
     MPI_Request send_req, recv_req, send_back_req;
     int recv_code = 100, send_code = 100, send_back_code = 100, reduce_code = 100;
 
-    int message_back_found = 0, last_message_it = it;
+    int message_back_found = 0, message_finalize_found = 0;
     /* Основной итерационный цикл */
     do
     {
-        if (f == 1 && local_finish == 0) local_finish = 1;
-        MPI_Iallreduce(&local_finish, &global_finish,
-            1, MPI_INT, MPI_LAND, MPI_COMM_WORLD, &finish_request);
+        if (f == 1 && local_finish == 0) { 
+            local_finish = 1;
+            for (int dest = 0; dest < size; dest++)
+                if (dest != rank)
+                    MPI_Isend(&local_finish, 1, MPI_INT,
+                        dest, TAG_FINALIZE, MPI_COMM_WORLD, &finish_request);
+            if (local_finish && (finalize_count >= size - 1)) break;
+        }
+        MPI_Iprobe(MPI_ANY_SOURCE, TAG_FINALIZE, MPI_COMM_WORLD,
+            &message_finalize_found, MPI_STATUS_IGNORE);
+        if (message_finalize_found == 1) {
+            finalize_count += 1;
+            if (local_finish && (finalize_count >= size - 1)) break;
+        }
+
 
         f = 1;
         // Обратное распространение
@@ -186,7 +197,6 @@ int main(int argc, char** argv)
             if (message_back_found == 1) {
                 recv_code = MPI_Irecv(&(F[layer_count-1][0][0]), plane_size, MPI_DOUBLE,
                     rank + 1, TAG_BACK, MPI_COMM_WORLD, &recv_req);
-                last_message_it = it;
             }
         }
         // Прямое распространение
@@ -208,8 +218,6 @@ int main(int argc, char** argv)
         if (rank < head) {
             send_code = MPI_Isend(&(F[layer_count-2][0][0]), plane_size, MPI_DOUBLE,
                 rank + 1, TAG_DIRECT, MPI_COMM_WORLD, &send_req);
-            //printf(" F[%d][1][1] = %f\n", end_layer-1, F[end_layer - 1 - start_layer][1][1]);
-            //printf(" end_layer-1-start_layer = %d \n layer_count - 2 = %d", end_layer - 1 - start_layer, layer_count - 2);
         }
 
         if (message_back_found == 1 && recv_code == MPI_SUCCESS)
@@ -218,14 +226,8 @@ int main(int argc, char** argv)
             MPI_Wait(&send_req, MPI_STATUS_IGNORE);
         if (send_back_code == MPI_SUCCESS)
             MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
-        //printf(" %f %f %f %f\n", F[0][1][1], F[1][1][1], F[layer_count-1][1][1], F[layer_count-2][1][1]);
-        //printf("\n %d", it);
         it++;
-
-        int complete_flag = 0;
-        //MPI_Test(&finish_request, &complete_flag, MPI_STATUS_IGNORE);
-        //MPI_Wait(&finish_request, MPI_STATUS_IGNORE);
-    } while (!global_finish );
+    } while (true);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
@@ -254,11 +256,9 @@ int main(int argc, char** argv)
         }
 
         printf(" Max differ = %f\n in point(%d,%d,%d) = %f\n", max, mi, mj, mk, F2);
-        printf(" Range from %d to %d\n", start_layer, end_layer);
-        //printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
+        //printf(" Range from %d to %d\n", start_layer, end_layer);
     }
     deallocate_3d_array(F, in + 1, jn + 1);
     MPI_Finalize();
     return(0);
-
 }
