@@ -17,9 +17,9 @@ MPI_Request finish_request;
 #define y0 -1
 #define z0 -1
 
-#define in 50    
-#define jn 50
-#define kn 50
+#define in 100    
+#define jn 100
+#define kn 100
 #define plane_size ((jn+1)*(kn+1))
 
 #define TAG_DIRECT 1
@@ -33,6 +33,7 @@ void Inic();
 
 /* Выделение памяти для 3D пространства */
 double*** F;
+double F_tmp[jn+1][kn+1];
 int rank, size;
 int start_layer, end_layer, layer_count;
 
@@ -139,7 +140,7 @@ int main(int argc, char** argv)
     start_layer = int(double(rank) * (in + 1) / size);
     // Последний слой является смежной либо глобальной границей 
     end_layer = int(double(rank + 1) * (in + 1) / size) - 1;
-    layer_count = end_layer - start_layer + 2;
+    layer_count = end_layer - start_layer + 1;
 
     F = allocate_3d_array(in + 1, jn + 1, kn + 1);
 
@@ -205,8 +206,12 @@ int main(int argc, char** argv)
         for (i = start_layer + 2; i < end_layer; i++) f_count_FOblast();
 
         // Прямое распространение
-        if (rank < head) send_code = MPI_Isend(&(F[layer_count - 2][0][0]), plane_size, MPI_DOUBLE,
-            rank + 1, TAG_DIRECT, MPI_COMM_WORLD, &send_req);
+        if (rank < head) {
+            send_code = MPI_Isend(&(F[layer_count - 2][0][0]), plane_size, MPI_DOUBLE,
+                rank + 1, TAG_DIRECT, MPI_COMM_WORLD, &send_req);
+            //printf(" F[%d][1][1] = %f\n", end_layer-1, F[end_layer - 1 - start_layer][1][1]);
+            //printf(" end_layer-1-start_layer = %d \n layer_count - 2 = %d", end_layer - 1 - start_layer, layer_count - 2);
+        }
 
         if (message_back_found == 1 && recv_code == MPI_SUCCESS)
             MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
@@ -214,10 +219,9 @@ int main(int argc, char** argv)
             MPI_Wait(&send_req, MPI_STATUS_IGNORE);
         if (send_back_code == MPI_SUCCESS)
             MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
-
-        //if (global_finish == 1)break;
-        it++;
+        //printf(" %f %f %f %f\n", F[0][1][1], F[1][1][1], F[layer_count-1][1][1], F[layer_count-2][1][1]);
         //printf("\n %d", it);
+        it++;
 
         int complete_flag = 0;
         //MPI_Test(&finish_request, &complete_flag, MPI_STATUS_IGNORE);
@@ -233,7 +237,7 @@ int main(int argc, char** argv)
     double F2 = 0.0;
     max = 0.0;
     {
-        for (i = start_layer + 1; i < end_layer; i++)
+        for (i = start_layer+1 ; i < end_layer; i++)
         {
             for (j = 1; j < jn; j++)
             {
@@ -251,7 +255,7 @@ int main(int argc, char** argv)
         }
 
         printf(" Max differ = %f\n in point(%d,%d,%d) = %f\n", max, mi, mj, mk, F2);
-        //printf(" Range from %d to %d\n", start_layer, end_layer);
+        printf(" Range from %d to %d\n", start_layer, end_layer);
         //printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
     }
     deallocate_3d_array(F, in + 1, jn + 1);
