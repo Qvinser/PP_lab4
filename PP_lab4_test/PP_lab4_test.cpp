@@ -17,9 +17,9 @@ MPI_Request finish_request;
 #define y0 -1
 #define z0 -1
 
-#define in 20    
-#define jn 20
-#define kn 20
+#define in 50    
+#define jn 50
+#define kn 50
 #define plane_size ((jn+1)*(kn+1))
 
 #define TAG_DIRECT 1
@@ -221,7 +221,7 @@ int main(int argc, char** argv)
 
         int complete_flag = 0;
         //MPI_Test(&finish_request, &complete_flag, MPI_STATUS_IGNORE);
-        MPI_Wait(&finish_request, MPI_STATUS_IGNORE);
+        //MPI_Wait(&finish_request, MPI_STATUS_IGNORE);
     } while (!global_finish);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
