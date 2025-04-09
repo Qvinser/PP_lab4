@@ -184,7 +184,7 @@ int main(int argc, char** argv)
         if (rank < head) {
             MPI_Iprobe(rank + 1, TAG_BACK, MPI_COMM_WORLD, &message_back_found, MPI_STATUS_IGNORE);
             if (message_back_found == 1) {
-                recv_code = MPI_Irecv(&(F[layer_count - 1][0][0]), plane_size, MPI_DOUBLE,
+                recv_code = MPI_Irecv(&(F[layer_count-1][0][0]), plane_size, MPI_DOUBLE,
                     rank + 1, TAG_BACK, MPI_COMM_WORLD, &recv_req);
                 last_message_it = it;
             }
@@ -202,12 +202,11 @@ int main(int argc, char** argv)
                 rank - 1, TAG_BACK, MPI_COMM_WORLD, &send_back_req);
         }
         // Вычисляем остальное подпространство
-        //for (int times = 0; times < 5; times++)
         for (i = start_layer + 2; i < end_layer; i++) f_count_FOblast();
 
         // Прямое распространение
         if (rank < head) {
-            send_code = MPI_Isend(&(F[layer_count - 2][0][0]), plane_size, MPI_DOUBLE,
+            send_code = MPI_Isend(&(F[layer_count-2][0][0]), plane_size, MPI_DOUBLE,
                 rank + 1, TAG_DIRECT, MPI_COMM_WORLD, &send_req);
             //printf(" F[%d][1][1] = %f\n", end_layer-1, F[end_layer - 1 - start_layer][1][1]);
             //printf(" end_layer-1-start_layer = %d \n layer_count - 2 = %d", end_layer - 1 - start_layer, layer_count - 2);
@@ -226,7 +225,7 @@ int main(int argc, char** argv)
         int complete_flag = 0;
         //MPI_Test(&finish_request, &complete_flag, MPI_STATUS_IGNORE);
         //MPI_Wait(&finish_request, MPI_STATUS_IGNORE);
-    } while (!global_finish);
+    } while (!global_finish );
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
@@ -237,7 +236,7 @@ int main(int argc, char** argv)
     double F2 = 0.0;
     max = 0.0;
     {
-        for (i = start_layer+1 ; i < end_layer; i++)
+        for (i = start_layer+1; i < end_layer; i++)
         {
             for (j = 1; j < jn; j++)
             {
