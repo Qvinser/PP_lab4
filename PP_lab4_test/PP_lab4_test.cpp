@@ -20,7 +20,7 @@ MPI_Request finish_request;
 #define in 20    
 #define jn 20
 #define kn 20
-#define plane_size 441
+#define plane_size ((jn+1)*(kn+1))
 
 #define TAG_DIRECT 1
 #define TAG_BACK 2
@@ -32,8 +32,9 @@ double Ro(double, double, double);
 void Inic();
 
 /* Выделение памяти для 3D пространства */
-double F[in + 1][jn + 1][kn + 1];
+double*** F;
 int rank, size;
+int start_layer, end_layer, layer_count;
 
 double hx, hy, hz;
 int i, j, k, mi, mj, mk;
@@ -46,6 +47,29 @@ int R, fl, fl1, fl2;
 int it = 0, f = 0;
 long int osdt;
 
+double*** allocate_3d_array(int dim_x, int dim_y, int dim_z) {
+    // Выделяем один блок памяти
+    double* data = new double[dim_x * dim_y * dim_z];
+
+    // Указатели на строки Y
+    double*** array = new double** [dim_x];
+    for (int i = 0; i < dim_x; ++i) {
+        array[i] = new double* [dim_y];
+        for (int j = 0; j < dim_y; ++j) {
+            array[i][j] = &data[(i * dim_y + j) * dim_z];
+        }
+    }
+
+    return array;
+}
+
+void deallocate_3d_array(double*** array, int dim_x, int dim_y) {
+    delete[] & (array[0][0][0]); // удаляем data
+    for (int i = 0; i < dim_x; ++i) {
+        delete[] array[i];
+    }
+    delete[] array;
+}
 
 /* Функция определения точного решения */
 double Fresh(double x, double y, double z)
@@ -67,19 +91,20 @@ double Ro(double x, double y, double z)
 void Inic()
 {
     int i, j, k;
-    for (i = 0; i <= in; i++)
+    for (i = start_layer; i <= end_layer; i++)
     {
+        int i_sh = i - start_layer;
         for (j = 0; j <= jn; j++)
         {
             for (k = 0; k <= kn; k++)
             {
                 if ((i != 0) && (j != 0) && (k != 0) && (i != in) && (j != jn) && (k != kn))
                 {
-                    F[i][j][k] = 0;
+                    F[i_sh][j][k] = 0;
                 }
                 else
                 {
-                    F[i][j][k] = Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz);
+                    F[i_sh][j][k] = Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz);
                 }
             }
         }
@@ -87,16 +112,17 @@ void Inic()
 }
 
 void f_count_FOblast() {
+    int i_sh = i - start_layer;
     for (j = 1; j < jn; j++)
     {
         for (k = 1; k < kn; k++)
         {
-            F1 = F[i][j][k];
-            Fi = (F[i + 1][j][k] + F[i - 1][j][k]) / owx;
-            Fj = (F[i][j + 1][k] + F[i][j - 1][k]) / owy;
-            Fk = (F[i][j][k + 1] + F[i][j][k - 1]) / owz;
-            F[i][j][k] = (Fi + Fj + Fk - Ro(x0 + i * hx, y0 + j * hy, z0 + k * hz)) / c;
-            if (fabs(F[i][j][k] - F1) > e) {
+            F1 = F[i_sh][j][k];
+            Fi = (F[i_sh + 1][j][k] + F[i_sh - 1][j][k]) / owx;
+            Fj = (F[i_sh][j + 1][k] + F[i_sh][j - 1][k]) / owy;
+            Fk = (F[i_sh][j][k + 1] + F[i_sh][j][k - 1]) / owz;
+            F[i_sh][j][k] = (Fi + Fj + Fk - Ro(x0 + i * hx, y0 + j * hy, z0 + k * hz)) / c;
+            if (fabs(F[i_sh][j][k] - F1) > e) {
                 f = 0;
             }
         }
@@ -109,7 +135,13 @@ int main(int argc, char** argv)
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
-    
+    // Первый слой является смежной либо глобальной границей 
+    start_layer = int(double(rank) * (in + 1) / size);
+    // Последний слой является смежной либо глобальной границей 
+    end_layer = int(double(rank + 1) * (in + 1) / size) - 1;
+    layer_count = end_layer - start_layer + 2;
+
+    F = allocate_3d_array(in+1, jn+1, kn+1);
 
     it = 0;
     X = 2.0;
@@ -138,11 +170,6 @@ int main(int argc, char** argv)
     MPI_Request send_req, recv_req, send_back_req;
     int recv_code = 100, send_code = 100, send_back_code = 100, reduce_code = 100;
 
-    int start_layer = int(double(rank) * (in+1) / size);
-    // Последний слой (end_layer) не принадлежит подобласти конкретного процесса
-    int end_layer = int(double(rank+1) * (in+1) / size);
-    // направление "волны" передачи; size-1 - ранк самого верхнего слоя
-
     int message_back_found = 0, last_message_it = it;
     /* Основной итерационный цикл */
     do
@@ -156,33 +183,29 @@ int main(int argc, char** argv)
         if (rank < head) {
             MPI_Iprobe(rank+1, TAG_BACK, MPI_COMM_WORLD, &message_back_found, MPI_STATUS_IGNORE);
             if (message_back_found == 1) {
-                recv_code = MPI_Irecv(&(F[end_layer][0][0]), plane_size, MPI_DOUBLE,
+                recv_code = MPI_Irecv(&(F[layer_count-1][0][0]), plane_size, MPI_DOUBLE,
                     rank+1, TAG_BACK, MPI_COMM_WORLD, &recv_req);
                 last_message_it = it;
             }
         }
         // Прямое распространение
         if (rank != root) {
-            MPI_Recv(&(F[start_layer-1][0][0]), plane_size, MPI_DOUBLE,
+            MPI_Recv(&(F[0][0][0]), plane_size, MPI_DOUBLE,
                 rank-1, TAG_DIRECT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
         // Вычисляем границу для обратного распространения
+        i = start_layer + 1;
+        f_count_FOblast();
         if (rank != root) {
-            i = start_layer;
-            f_count_FOblast();
-            send_back_code = MPI_Isend(&(F[start_layer][0][0]), plane_size, MPI_DOUBLE,
+            send_back_code = MPI_Isend(&(F[1][0][0]), plane_size, MPI_DOUBLE,
                 rank-1, TAG_BACK, MPI_COMM_WORLD, &send_back_req);
         }
         // Вычисляем остальное подпространство
         //for (int times = 0; times < 5; times++)
-        for (i = start_layer+1; i < end_layer-1; i++) f_count_FOblast();
-        if (rank < head) {
-            i = end_layer - 1;
-            f_count_FOblast();
-        }
+        for (i = start_layer+2; i < end_layer; i++) f_count_FOblast();
 
         // Прямое распространение
-        if (rank < head) send_code = MPI_Isend(&(F[end_layer - 1][0][0]), plane_size, MPI_DOUBLE,
+        if (rank < head) send_code = MPI_Isend(&(F[layer_count-2][0][0]), plane_size, MPI_DOUBLE,
             rank+1, TAG_DIRECT, MPI_COMM_WORLD, &send_req);
 
         if (message_back_found == 1 && recv_code == MPI_SUCCESS)
@@ -207,16 +230,19 @@ int main(int argc, char** argv)
 
     /* Нахождение максимального расхождения полученного приближенного решения
      * и точного решения */
+    double F2 = 0.0;
     max = 0.0;
     {
-        for (i = start_layer; i < end_layer; i++)
+        for (i = start_layer+1; i < end_layer; i++)
         {
             for (j = 1; j < jn; j++)
             {
                 for (k = 1; k < kn; k++)
                 {
-                    if ((F1 = fabs(F[i][j][k] - Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz))) > max)
+                    if ((F1 = fabs(F[i-start_layer][j][k] 
+                        - Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz))) > max)
                     {
+                        F2 = F[i - start_layer][j][k];
                         max = F1;
                         mi = i; mj = j; mk = k;
                     }
@@ -224,9 +250,11 @@ int main(int argc, char** argv)
             }
         }
 
-        printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
-        printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
+        printf(" Max differ = %f\n in point(%d,%d,%d) = %f\n", max, mi, mj, mk, F2);
+        printf(" Range from %d to %d\n", start_layer, end_layer);
+        //printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
     }
+    deallocate_3d_array(F, in+1, jn+1);
     MPI_Finalize();
     return(0);
 

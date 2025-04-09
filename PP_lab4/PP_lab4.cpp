@@ -4,12 +4,16 @@
 #include<time.h>
 #include<chrono>
 
-/* Количество ячеек вдоль координат x, y, z */
-#define in 20    
-#define jn 20
-#define kn 20
+#define x0 -1
+#define y0 -1
+#define z0 -1
 
-#define a 1
+/* Количество ячеек вдоль координат x, y, z */
+#define in 150
+#define jn 150
+#define kn 150
+
+#define a 1e+5
 
 double Fresh(double, double, double);
 double Ro(double, double, double);
@@ -25,7 +29,7 @@ double hx, hy, hz;
 double Fresh(double x, double y, double z)
 {
     double res;
-    res = x + y + z;
+    res = (x * x + y * y + z * z);
     return res;
 }
 
@@ -33,7 +37,7 @@ double Fresh(double x, double y, double z)
 double Ro(double x, double y, double z)
 {
     double d;
-    d = -a * (x + y + z);
+    d = 6 - a * (x * x + y * y + z * z);
     return d;
 }
 
@@ -53,7 +57,7 @@ void Inic()
                 }
                 else
                 {
-                    F[i][j][k] = Fresh(i * hx, j * hy, k * hz);
+                    F[i][j][k] = Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz);
                 }
             }
         }
@@ -78,7 +82,7 @@ int main()
     X = 2.0;
     Y = 2.0;
     Z = 2.0;
-    e = 0.00001;
+    e = 1e-8;
 
     /* Размеры шагов */
     hx = X / in;
@@ -108,7 +112,7 @@ int main()
                     Fi = (F[i + 1][j][k] + F[i - 1][j][k]) / owx;
                     Fj = (F[i][j + 1][k] + F[i][j - 1][k]) / owy;
                     Fk = (F[i][j][k + 1] + F[i][j][k - 1]) / owz;
-                    F[i][j][k] = (Fi + Fj + Fk - Ro(i * hx, j * hy, k * hz)) / c;
+                    F[i][j][k] = (Fi + Fj + Fk - Ro(x0 + i * hx, y0 + j * hy, z0 + k * hz)) / c;
                     if (fabs(F[i][j][k] - F1) > e)
                         f = 0;
                 }
@@ -130,7 +134,7 @@ int main()
             {
                 for (k = 1; k < kn; k++)
                 {
-                    if ((F1 = fabs(F[i][j][k] - Fresh(i * hx, j * hy, k * hz))) > max)
+                    if ((F1 = fabs(F[i][j][k] - Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz))) > max)
                     {
                         max = F1;
                         mi = i; mj = j; mk = k;
@@ -140,7 +144,6 @@ int main()
         }
 
         printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
-        printf(" F[10][10][10] = %f\n", F[10][10][10]);
     }
     return(0);
 
