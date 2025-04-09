@@ -136,10 +136,12 @@ int main(int argc, char** argv)
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
+    int root = 0;
+    int head = size - 1;
     // Первый слой является смежной либо глобальной границей 
-    start_layer = int(double(rank) * (in + 1) / size);
-    // Последний слой является смежной либо глобальной границей 
-    end_layer = int(double(rank + 1) * (in + 1) / size) - 1;
+    start_layer = int(double(rank) * (in) / size);
+    // Последний F[end_layer] слой является смежной либо глобальной границей  
+    end_layer = int(double(rank + 1) * (in) / size);
     layer_count = end_layer - start_layer + 1;
 
     F = allocate_3d_array(in + 1, jn + 1, kn + 1);
@@ -164,8 +166,6 @@ int main(int argc, char** argv)
     auto start = std::chrono::steady_clock::now();
     /* Инициализация границ пространства */
     Inic();
-    int root = 0;
-    int head = size - 1;
     int test_flag = 0;
 
     MPI_Request send_req, recv_req, send_back_req;
@@ -255,7 +255,7 @@ int main(int argc, char** argv)
         }
 
         printf(" Max differ = %f\n in point(%d,%d,%d) = %f\n", max, mi, mj, mk, F2);
-        //printf(" Range from %d to %d\n", start_layer, end_layer);
+        printf(" Range from %d to %d\n", start_layer, end_layer);
         //printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
     }
     deallocate_3d_array(F, in + 1, jn + 1);
