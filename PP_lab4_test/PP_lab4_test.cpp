@@ -3,27 +3,15 @@
 #include<math.h>
 #include<time.h>
 #include<chrono>
-#include<vector>
-#include "mpi.h"
 
-// Флаги о завершении работы
-int local_finish = 0;
-int global_finish = 0;
-bool finish_flag = false;
-MPI_Request finish_request;
-
-/* Количество ячеек вдоль координат x, y, z */
 #define x0 -1
 #define y0 -1
 #define z0 -1
 
-#define in 50    
+/* Количество ячеек вдоль координат x, y, z */
+#define in 50
 #define jn 50
 #define kn 50
-#define plane_size ((jn+1)*(kn+1))
-
-#define TAG_DIRECT 1
-#define TAG_BACK 2
 
 #define a 1e+5
 
@@ -32,44 +20,10 @@ double Ro(double, double, double);
 void Inic();
 
 /* Выделение памяти для 3D пространства */
-double*** F;
-int rank, size;
-int start_layer, end_layer, layer_count;
+double F[in + 1][jn + 1][kn + 1];
 
 double hx, hy, hz;
-int i, j, k, mi, mj, mk;
-double X, Y, Z;
-double max, N, t1, t2;
-double owx, owy, owz, c, e;
-double Fi, Fj, Fk, F1;
 
-int R, fl, fl1, fl2;
-int it = 0, f = 0;
-long int osdt;
-
-double*** allocate_3d_array(int dim_x, int dim_y, int dim_z) {
-    // Выделяем один блок памяти
-    double* data = new double[dim_x * dim_y * dim_z];
-
-    // Указатели на строки Y
-    double*** array = new double** [dim_x];
-    for (int i = 0; i < dim_x; ++i) {
-        array[i] = new double* [dim_y];
-        for (int j = 0; j < dim_y; ++j) {
-            array[i][j] = &data[(i * dim_y + j) * dim_z];
-        }
-    }
-
-    return array;
-}
-
-void deallocate_3d_array(double*** array, int dim_x, int dim_y) {
-    delete[] & (array[0][0][0]); // удаляем data
-    for (int i = 0; i < dim_x; ++i) {
-        delete[] array[i];
-    }
-    delete[] array;
-}
 
 /* Функция определения точного решения */
 double Fresh(double x, double y, double z)
@@ -83,7 +37,7 @@ double Fresh(double x, double y, double z)
 double Ro(double x, double y, double z)
 {
     double d;
-    d = 6 - a * (x*x + y*y + z*z);
+    d = 6 - a * (x * x + y * y + z * z);
     return d;
 }
 
@@ -91,57 +45,38 @@ double Ro(double x, double y, double z)
 void Inic()
 {
     int i, j, k;
-    for (i = start_layer; i <= end_layer; i++)
+    for (i = 0; i <= in; i++)
     {
-        int i_sh = i - start_layer;
         for (j = 0; j <= jn; j++)
         {
             for (k = 0; k <= kn; k++)
             {
                 if ((i != 0) && (j != 0) && (k != 0) && (i != in) && (j != jn) && (k != kn))
                 {
-                    F[i_sh][j][k] = 0;
+                    F[i][j][k] = 0;
                 }
                 else
                 {
-                    F[i_sh][j][k] = Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz);
+                    F[i][j][k] = Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz);
                 }
             }
         }
     }
 }
 
-void f_count_FOblast() {
-    int i_sh = i - start_layer;
-    for (j = 1; j < jn; j++)
-    {
-        for (k = 1; k < kn; k++)
-        {
-            F1 = F[i_sh][j][k];
-            Fi = (F[i_sh + 1][j][k] + F[i_sh - 1][j][k]) / owx;
-            Fj = (F[i_sh][j + 1][k] + F[i_sh][j - 1][k]) / owy;
-            Fk = (F[i_sh][j][k + 1] + F[i_sh][j][k - 1]) / owz;
-            F[i_sh][j][k] = (Fi + Fj + Fk - Ro(x0 + i * hx, y0 + j * hy, z0 + k * hz)) / c;
-            if (fabs(F[i_sh][j][k] - F1) > e) {
-                f = 0;
-            }
-        }
-    }
-}
 
-
-int main(int argc, char** argv)
+int main()
 {
-    MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-    // Первый слой является смежной либо глобальной границей 
-    start_layer = int(double(rank) * (in + 1) / size);
-    // Последний слой является смежной либо глобальной границей 
-    end_layer = int(double(rank + 1) * (in + 1) / size) - 1;
-    layer_count = end_layer - start_layer + 2;
+    double X, Y, Z;
+    double max, N, t1, t2;
+    double owx, owy, owz, c, e;
+    double Fi, Fj, Fk, F1;
 
-    F = allocate_3d_array(in+1, jn+1, kn+1);
+    int i, j, k, mi, mj, mk;
+    int R, fl, fl1, fl2;
+    int it, f;
+    long int osdt;
+
 
     it = 0;
     X = 2.0;
@@ -163,86 +98,44 @@ int main(int argc, char** argv)
     auto start = std::chrono::steady_clock::now();
     /* Инициализация границ пространства */
     Inic();
-    int root = 0;
-    int head = size - 1;
-    int test_flag = 0;
 
-    MPI_Request send_req, recv_req, send_back_req;
-    int recv_code = 100, send_code = 100, send_back_code = 100, reduce_code = 100;
-
-    int message_back_found = 0, last_message_it = it;
     /* Основной итерационный цикл */
     do
     {
-        if (f == 1 && local_finish==0) local_finish = 1;
-        MPI_Iallreduce(&local_finish, &global_finish,
-            1, MPI_INT, MPI_LAND, MPI_COMM_WORLD, &finish_request);
-
         f = 1;
-        // Обратное распространение
-        if (rank < head) {
-            MPI_Iprobe(rank+1, TAG_BACK, MPI_COMM_WORLD, &message_back_found, MPI_STATUS_IGNORE);
-            if (message_back_found == 1) {
-                recv_code = MPI_Irecv(&(F[layer_count-1][0][0]), plane_size, MPI_DOUBLE,
-                    rank+1, TAG_BACK, MPI_COMM_WORLD, &recv_req);
-                last_message_it = it;
+        for (i = 1; i < in; i++)
+            for (j = 1; j < jn; j++)
+            {
+                for (k = 1; k < kn; k++)
+                {
+                    F1 = F[i][j][k];
+                    Fi = (F[i + 1][j][k] + F[i - 1][j][k]) / owx;
+                    Fj = (F[i][j + 1][k] + F[i][j - 1][k]) / owy;
+                    Fk = (F[i][j][k + 1] + F[i][j][k - 1]) / owz;
+                    F[i][j][k] = (Fi + Fj + Fk - Ro(x0 + i * hx, y0 + j * hy, z0 + k * hz)) / c;
+                    if (fabs(F[i][j][k] - F1) > e)
+                        f = 0;
+                }
             }
-        }
-        // Прямое распространение
-        if (rank != root) {
-            MPI_Recv(&(F[0][0][0]), plane_size, MPI_DOUBLE,
-                rank-1, TAG_DIRECT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        }
-        // Вычисляем границу для обратного распространения
-        i = start_layer + 1;
-        f_count_FOblast();
-        if (rank != root) {
-            send_back_code = MPI_Isend(&(F[1][0][0]), plane_size, MPI_DOUBLE,
-                rank-1, TAG_BACK, MPI_COMM_WORLD, &send_back_req);
-        }
-        // Вычисляем остальное подпространство
-        //for (int times = 0; times < 5; times++)
-        for (i = start_layer+2; i < end_layer; i++) f_count_FOblast();
-
-        // Прямое распространение
-        if (rank < head) send_code = MPI_Isend(&(F[layer_count-2][0][0]), plane_size, MPI_DOUBLE,
-            rank+1, TAG_DIRECT, MPI_COMM_WORLD, &send_req);
-
-        if (message_back_found == 1 && recv_code == MPI_SUCCESS)
-            MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
-        if (send_code == MPI_SUCCESS)
-            MPI_Wait(&send_req, MPI_STATUS_IGNORE);
-        if (send_back_code == MPI_SUCCESS)
-            MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
-
-        //if (global_finish == 1)break;
         it++;
-        //printf("\n %d", it);
-
-        int complete_flag = 0;
-        //MPI_Test(&finish_request, &complete_flag, MPI_STATUS_IGNORE);
-        //MPI_Wait(&finish_request, MPI_STATUS_IGNORE);
-    } while (!global_finish);
+    } while (f == 0);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
-    printf("\n rank = %d  iter = %d E = %f  T = %f seconds\n", rank, it, e, elapsed.count());
+    printf("\n in = %d  iter = %d E = %f  T = %f seconds\n", in, it, e, elapsed.count());
 
     /* Нахождение максимального расхождения полученного приближенного решения
      * и точного решения */
-    double F2 = 0.0;
     max = 0.0;
     {
-        for (i = start_layer+1; i < end_layer; i++)
+        for (i = 1; i <= in; i++)
         {
             for (j = 1; j < jn; j++)
             {
                 for (k = 1; k < kn; k++)
                 {
-                    if ((F1 = fabs(F[i-start_layer][j][k] 
-                        - Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz))) > max)
+                    if ((F1 = fabs(F[i][j][k] - Fresh(x0 + i * hx, y0 + j * hy, z0 + k * hz))) > max)
                     {
-                        F2 = F[i - start_layer][j][k];
                         max = F1;
                         mi = i; mj = j; mk = k;
                     }
@@ -250,12 +143,8 @@ int main(int argc, char** argv)
             }
         }
 
-        printf(" Max differ = %f\n in point(%d,%d,%d) = %f\n", max, mi, mj, mk, F2);
-        printf(" Range from %d to %d\n", start_layer, end_layer);
-        //printf(" F[%d][10][10] = %f\n", start_layer+2, F[start_layer+2][10][10]);
+        printf(" Max differ = %f\n in point(%d,%d,%d)\n", max, mi, mj, mk);
     }
-    deallocate_3d_array(F, in+1, jn+1);
-    MPI_Finalize();
     return(0);
 
 }
