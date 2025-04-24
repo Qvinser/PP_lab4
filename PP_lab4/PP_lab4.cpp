@@ -210,10 +210,6 @@ int main(int argc, char** argv)
             record_end = std::chrono::steady_clock::now();
             transfer_sum_time += (record_end - record_start).count();
             if (message_back_found == 1 && recv_code == MPI_SUCCESS);
-            //else if (it > 0) {
-            //    printf("Rank = %d, it = %d\n", rank, it); 
-            //    continue;
-            //}
         }
 
         f = 1;
@@ -272,8 +268,9 @@ int main(int argc, char** argv)
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
-    printf("\n rank = %d  iter = %d E = %f  T = %f sec  T_calc = %f sec T_transf = %f sec\n",
-        rank, it, e, elapsed.count(), calculations_sum_time/1e+9, transfer_sum_time/1e+9);
+    printf("\n rank = %d  iter = %d E = %f  T = %f sec  T_calc = %f sec T_transf = %f sec Eff = %f\n",
+        rank, it, e, elapsed.count(), calculations_sum_time/1e+9, transfer_sum_time/1e+9,
+        (double)transfer_sum_time/ calculations_sum_time);
 
     /* Нахождение максимального расхождения полученного приближенного решения
      * и точного решения */ 
