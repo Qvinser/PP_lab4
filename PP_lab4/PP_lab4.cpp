@@ -204,13 +204,16 @@ int main(int argc, char** argv)
                 recv_code = MPI_Irecv(&(F[layer_count-1][0][0]), plane_size, MPI_DOUBLE,
                     rank + 1, TAG_BACK, MPI_COMM_WORLD, &recv_req);
             }
-            //if (rank!=root)printf("Rank = %d, it = %d\n", rank, it); 
             if (message_back_found == 1 && recv_code == MPI_SUCCESS) {
                 MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
             }
             record_end = std::chrono::steady_clock::now();
             transfer_sum_time += (record_end - record_start).count();
-            //else if (it > 0) continue;
+            if (message_back_found == 1 && recv_code == MPI_SUCCESS);
+            //else if (it > 0) {
+            //    printf("Rank = %d, it = %d\n", rank, it); 
+            //    continue;
+            //}
         }
 
         f = 1;
