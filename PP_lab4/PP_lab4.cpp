@@ -163,17 +163,22 @@ int main(int argc, char** argv)
     c = 2 / owx + 2 / owy + 2 / owz + a;
 
     auto start = std::chrono::steady_clock::now();
+    long long transfer_sum_time = 0, calculations_sum_time = 0;
     /* Инициализация границ пространства */
     Inic();
     int test_flag = 0;
 
     MPI_Request send_req, recv_req, send_back_req;
     int recv_code = 100, send_code = 100, send_back_code = 100, reduce_code = 100;
-
+    int old_it = -1;
     int message_back_found = 0, message_finalize_found = 0;
+
+    std::chrono::steady_clock::time_point record_start, record_end;
     /* Основной итерационный цикл */
     do
     {
+        record_start = std::chrono::steady_clock::now();
+        // Проверка на окончание работы
         if (f == 1 && local_finish == 0) { 
             local_finish = 1;
             for (int dest = 0; dest < size; dest++)
@@ -188,31 +193,62 @@ int main(int argc, char** argv)
             finalize_count += 1;
             if (local_finish && (finalize_count >= size - 1)) break;
         }
+        record_end = std::chrono::steady_clock::now();
+        transfer_sum_time += (record_end - record_start).count();
 
-
-        f = 1;
         // Обратное распространение
         if (rank < head) {
+            record_start = std::chrono::steady_clock::now();
             MPI_Iprobe(rank + 1, TAG_BACK, MPI_COMM_WORLD, &message_back_found, MPI_STATUS_IGNORE);
             if (message_back_found == 1) {
                 recv_code = MPI_Irecv(&(F[layer_count-1][0][0]), plane_size, MPI_DOUBLE,
                     rank + 1, TAG_BACK, MPI_COMM_WORLD, &recv_req);
             }
+            //if (rank!=root)printf("Rank = %d, it = %d\n", rank, it); 
+            if (message_back_found == 1 && recv_code == MPI_SUCCESS) {
+                MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+            }
+            record_end = std::chrono::steady_clock::now();
+            transfer_sum_time += (record_end - record_start).count();
+            //else if (it > 0) continue;
         }
+
+        f = 1;
+
+        // Обратное распространение
+        //if (rank < head && it>0) {
+        //    MPI_Recv(&(F[layer_count - 1][0][0]), plane_size, MPI_DOUBLE,
+        //        rank + 1, TAG_BACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        //}
+
         // Прямое распространение
         if (rank != root) {
+            record_start = std::chrono::steady_clock::now();
             MPI_Recv(&(F[0][0][0]), plane_size, MPI_DOUBLE,
                 rank - 1, TAG_DIRECT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            record_end = std::chrono::steady_clock::now();
+            transfer_sum_time += (record_end - record_start).count();
         }
         // Вычисляем границу для обратного распространения
+        record_start = std::chrono::steady_clock::now();
         i = start_layer + 1;
         f_count_FOblast();
+        record_end = std::chrono::steady_clock::now();
+        calculations_sum_time += (record_end - record_start).count();
+
+        record_start = std::chrono::steady_clock::now();
         if (rank != root) {
             send_back_code = MPI_Isend(&(F[1][0][0]), plane_size, MPI_DOUBLE,
                 rank - 1, TAG_BACK, MPI_COMM_WORLD, &send_back_req);
         }
+        record_end = std::chrono::steady_clock::now();
+        transfer_sum_time += (record_end - record_start).count();
+
         // Вычисляем остальное подпространство
+        record_start = std::chrono::steady_clock::now();
         for (i = start_layer + 2; i < end_layer; i++) f_count_FOblast();
+        record_end = std::chrono::steady_clock::now();
+        calculations_sum_time += (record_end - record_start).count();
 
         // Прямое распространение
         if (rank < head) {
@@ -220,21 +256,24 @@ int main(int argc, char** argv)
                 rank + 1, TAG_DIRECT, MPI_COMM_WORLD, &send_req);
         }
 
-        if (message_back_found == 1 && recv_code == MPI_SUCCESS)
-            MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
+        record_start = std::chrono::steady_clock::now();
         if (send_code == MPI_SUCCESS)
             MPI_Wait(&send_req, MPI_STATUS_IGNORE);
         if (send_back_code == MPI_SUCCESS)
             MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
+        record_end = std::chrono::steady_clock::now();
+        transfer_sum_time += (record_end - record_start).count();
         it++;
+
     } while (true);
 
     std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
-    printf("\n rank = %d  iter = %d E = %f  T = %f seconds\n", rank, it, e, elapsed.count());
+    printf("\n rank = %d  iter = %d E = %f  T = %f sec  T_calc = %f sec T_transf = %f sec\n",
+        rank, it, e, elapsed.count(), calculations_sum_time/1e+9, transfer_sum_time/1e+9);
 
     /* Нахождение максимального расхождения полученного приближенного решения
-     * и точного решения */
+     * и точного решения */ 
     double F2 = 0.0;
     max = 0.0;
     {
