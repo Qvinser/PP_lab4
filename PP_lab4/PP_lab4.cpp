@@ -44,7 +44,8 @@ double owx, owy, owz, c, e;
 double Fi, Fj, Fk, F1;
 
 int R, fl, fl1, fl2;
-int it = 0, f = 0;
+int it = 0;
+double diff = 1e+6, max_diff = 1e+6, reduced_diff = 1e+6;
 long int osdt;
 
 double*** allocate_3d_array(int dim_x, int dim_y, int dim_z) {
@@ -122,9 +123,8 @@ void f_count_FOblast() {
             Fj = (F[i_sh][j + 1][k] + F[i_sh][j - 1][k]) / owy;
             Fk = (F[i_sh][j][k + 1] + F[i_sh][j][k - 1]) / owz;
             F[i_sh][j][k] = (Fi + Fj + Fk - Ro(x0 + i * hx, y0 + j * hy, z0 + k * hz)) / c;
-            if (fabs(F[i_sh][j][k] - F1) > e) {
-                f = 0;
-            }
+            diff = fabs(F[i_sh][j][k] - F1);
+            if (diff > max_diff) max_diff = diff;
         }
     }
 }
@@ -168,66 +168,36 @@ int main(int argc, char** argv)
     Inic();
     int test_flag = 0;
 
-    MPI_Request send_req, recv_req, send_back_req;
-    int recv_code = 100, send_code = 100, send_back_code = 100, reduce_code = 100;
-    int old_it = -1;
-    int message_back_found = 0, message_finalize_found = 0;
+    MPI_Request send_direct_req, send_back_req, recv_direct_req, recv_back_req, allreduce_req;
 
     std::chrono::steady_clock::time_point record_start, record_end;
     /* Основной итерационный цикл */
     do
     {
+        int send_direct_flag = 1, send_back_flag = 1, recv_direct_flag = 1, recv_back_flag = 1, allreduce_flag = 1;
         record_start = std::chrono::steady_clock::now();
-        // Проверка на окончание работы
-        if (f == 1 && local_finish == 0) { 
-            local_finish = 1;
-            for (int dest = 0; dest < size; dest++)
-                if (dest != rank)
-                    MPI_Isend(&local_finish, 1, MPI_INT,
-                        dest, TAG_FINALIZE, MPI_COMM_WORLD, &finish_request);
-            if (local_finish && (finalize_count >= size - 1)) break;
-        }
-        MPI_Iprobe(MPI_ANY_SOURCE, TAG_FINALIZE, MPI_COMM_WORLD,
-            &message_finalize_found, MPI_STATUS_IGNORE);
-        if (message_finalize_found == 1) {
-            finalize_count += 1;
-            if (local_finish && (finalize_count >= size - 1)) break;
-        }
+        allreduce_flag = MPI_Iallreduce(&max_diff, &reduced_diff, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD, &allreduce_req);
         record_end = std::chrono::steady_clock::now();
         transfer_sum_time += (record_end - record_start).count();
 
         // Обратное распространение
         if (rank < head) {
             record_start = std::chrono::steady_clock::now();
-            MPI_Iprobe(rank + 1, TAG_BACK, MPI_COMM_WORLD, &message_back_found, MPI_STATUS_IGNORE);
-            if (message_back_found == 1) {
-                recv_code = MPI_Irecv(&(F[layer_count-1][0][0]), plane_size, MPI_DOUBLE,
-                    rank + 1, TAG_BACK, MPI_COMM_WORLD, &recv_req);
-            }
-            if (message_back_found == 1 && recv_code == MPI_SUCCESS) {
-                MPI_Wait(&recv_req, MPI_STATUS_IGNORE);
-            }
+            recv_back_flag = MPI_Irecv(&(F[layer_count-1][0][0]), plane_size, MPI_DOUBLE,
+                    rank + 1, TAG_BACK, MPI_COMM_WORLD, &recv_back_req);
             record_end = std::chrono::steady_clock::now();
             transfer_sum_time += (record_end - record_start).count();
-            if (message_back_found == 1 && recv_code == MPI_SUCCESS);
         }
-
-        f = 1;
-
-        // Обратное распространение
-        //if (rank < head && it>0) {
-        //    MPI_Recv(&(F[layer_count - 1][0][0]), plane_size, MPI_DOUBLE,
-        //        rank + 1, TAG_BACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        //}
 
         // Прямое распространение
         if (rank != root) {
             record_start = std::chrono::steady_clock::now();
-            MPI_Recv(&(F[0][0][0]), plane_size, MPI_DOUBLE,
-                rank - 1, TAG_DIRECT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            recv_direct_flag = MPI_Irecv(&(F[0][0][0]), plane_size, MPI_DOUBLE,
+                rank - 1, TAG_DIRECT, MPI_COMM_WORLD, &recv_direct_req);
             record_end = std::chrono::steady_clock::now();
             transfer_sum_time += (record_end - record_start).count();
         }
+        max_diff = 0.0;
         // Вычисляем границу для обратного распространения
         record_start = std::chrono::steady_clock::now();
         i = start_layer + 1;
@@ -237,7 +207,7 @@ int main(int argc, char** argv)
 
         record_start = std::chrono::steady_clock::now();
         if (rank != root) {
-            send_back_code = MPI_Isend(&(F[1][0][0]), plane_size, MPI_DOUBLE,
+            send_back_flag = MPI_Isend(&(F[1][0][0]), plane_size, MPI_DOUBLE,
                 rank - 1, TAG_BACK, MPI_COMM_WORLD, &send_back_req);
         }
         record_end = std::chrono::steady_clock::now();
@@ -251,15 +221,17 @@ int main(int argc, char** argv)
 
         // Прямое распространение
         if (rank < head) {
-            send_code = MPI_Isend(&(F[layer_count-2][0][0]), plane_size, MPI_DOUBLE,
-                rank + 1, TAG_DIRECT, MPI_COMM_WORLD, &send_req);
+            send_direct_flag = MPI_Isend(&(F[layer_count-2][0][0]), plane_size, MPI_DOUBLE,
+                rank + 1, TAG_DIRECT, MPI_COMM_WORLD, &send_direct_req);
         }
 
         record_start = std::chrono::steady_clock::now();
-        if (send_code == MPI_SUCCESS)
-            MPI_Wait(&send_req, MPI_STATUS_IGNORE);
-        if (send_back_code == MPI_SUCCESS)
-            MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
+        if (!allreduce_flag)MPI_Wait(&allreduce_req, MPI_STATUS_IGNORE);
+        if (!send_direct_flag)MPI_Wait(&send_direct_req, MPI_STATUS_IGNORE);
+        if (!send_back_flag)MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
+        if (!recv_direct_flag)MPI_Wait(&recv_direct_req, MPI_STATUS_IGNORE);
+        if (!recv_back_flag)MPI_Wait(&recv_back_req, MPI_STATUS_IGNORE);
+        if (reduced_diff < e) break;
         record_end = std::chrono::steady_clock::now();
         transfer_sum_time += (record_end - record_start).count();
         it++;
