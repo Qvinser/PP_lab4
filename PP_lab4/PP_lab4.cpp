@@ -11,11 +11,12 @@ int local_finish = 0;
 int finalize_count = 0;
 MPI_Request finish_request;
 
-/* Количество ячеек вдоль координат x, y, z */
+// Стартовые координаты
 #define x0 -1
 #define y0 -1
 #define z0 -1
 
+/* Количество ячеек вдоль координат x, y, z */
 #define in 2000
 #define jn 50
 #define kn 50
@@ -46,7 +47,6 @@ double Fi, Fj, Fk, F1;
 int R, fl, fl1, fl2;
 int it = 0;
 double diff = 1e+6, max_diff = 1e+6, reduced_diff = 1e+6;
-long int osdt;
 
 double*** allocate_3d_array(int dim_x, int dim_y, int dim_z) {
     // Выделяем один блок памяти
@@ -185,6 +185,7 @@ int main(int argc, char** argv)
             record_start = std::chrono::steady_clock::now();
             recv_back_flag = MPI_Irecv(&(F[layer_count-1][0][0]), plane_size, MPI_DOUBLE,
                     rank + 1, TAG_BACK, MPI_COMM_WORLD, &recv_back_req);
+            MPI_Wait(&recv_back_req, MPI_STATUS_IGNORE);
             record_end = std::chrono::steady_clock::now();
             transfer_sum_time += (record_end - record_start).count();
         }
@@ -230,7 +231,7 @@ int main(int argc, char** argv)
         if (!send_direct_flag)MPI_Wait(&send_direct_req, MPI_STATUS_IGNORE);
         if (!send_back_flag)MPI_Wait(&send_back_req, MPI_STATUS_IGNORE);
         if (!recv_direct_flag)MPI_Wait(&recv_direct_req, MPI_STATUS_IGNORE);
-        if (!recv_back_flag)MPI_Wait(&recv_back_req, MPI_STATUS_IGNORE);
+        //if (!recv_back_flag)MPI_Wait(&recv_back_req, MPI_STATUS_IGNORE);
         if (reduced_diff < e) break;
         record_end = std::chrono::steady_clock::now();
         transfer_sum_time += (record_end - record_start).count();
